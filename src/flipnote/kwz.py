@@ -115,7 +115,7 @@ for sample in range(16):
         ADPCM_SAMPLE_TABLE_4[sample + 16 * step_index] = diff
 
 
-class KWZ:
+class Parser:
     def __init__(self, buffer=None):
         # layer output buffers
         self.layer_pixels = np.zeros((3, 240, 40), dtype="V8")
