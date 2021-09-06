@@ -4,7 +4,7 @@ with open("README.md", "r", encoding="utf-8") as fh:
     long_description = fh.read()
 
 setup(name="flipnote",
-      version="0.0.3",
+      version="0.0.5",
       description="A Python library for Flipnote Studio (3D) files",
       long_description=long_description,
       long_description_content_type="text/markdown",
@@ -14,9 +14,9 @@ setup(name="flipnote",
       install_requires=[
           "numpy"
       ],
-      url="https://github.com/pypa/sampleproject",
+      url="https://github.com/meemo/flipnote.py",
       project_urls={
-          "Bug Tracker": "https://github.com/pypa/sampleproject/issues",
+          "Bug Tracker": "https://github.com/meemo/flipnote.py/issues",
       },
       classifiers=[
           "Programming Language :: Python :: 3",
