@@ -1,9 +1,12 @@
 from re import match
 from textwrap import wrap
+from base64 import b32decode
 
 """
 This file contains functions relating to various schema within flipnotes.
 """
+
+KWZ_FSID_trans = str.maketrans("CWMFJORDVEGBALKSNTHPYXQUIZ012345", "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567")
 
 
 def verifyPPMFSID(input_fsid):
@@ -49,7 +52,7 @@ def convertKWZFSIDToPPM(input_fsid):
     Any invalid input will be returned without modification.
     - e.g. if a PPM format FSID is used as the input or the length is invalid
     """
-    output_fsid = input_fsid
+    output_fsid = ""
 
     if verifyKWZFSID(input_fsid):
         # Trim the first byte of the FSID
@@ -68,7 +71,7 @@ def convertKWZFSIDToPPM(input_fsid):
     else:
         output_fsid = input_fsid
 
-    return output_fsid.upper()
+    return output_fsid
 
 
 def convertPPMtoKWZ(input_fsid):
@@ -78,8 +81,10 @@ def convertPPMtoKWZ(input_fsid):
     This returns the FSID with 00 as the leading byte by default
     - Once/if the purpose of this byte is discovered, it will be modified
     The trailing null byte is also included
+    Any invalid input will be returned without modification.
+    - e.g. if a PPM format FSID is used as the input or the length is invalid
     """
-    output_fsid = ""
+    output_fsid = input_fsid
 
     if verifyPPMFSID(input_fsid):
         # Invert the FSID then split into byte sized chunks
@@ -91,4 +96,24 @@ def convertPPMtoKWZ(input_fsid):
 
         output_fsid = "00" + output_fsid + "00"
 
-    return output_fsid.upper()
+    return output_fsid
+
+
+def unpackKWZFSID(input_fsid):
+    """
+    Unpacks KWZ format FSID to its decoded hex bytes.
+    Any invalid input will be returned without modification.
+    - e.g. if a PPM format FSID is used as the input or the length is invalid
+    """
+    output_fsid = input_fsid
+
+    if verifyKWZFSID(input_fsid):
+        # Convert custom base-32 encoded string to the standard base-32 alphabet
+        str(input_fsid).translate(KWZ_FSID_trans)
+
+        # Add padding to allow for decoding
+        input_fsid += "===="
+
+        output_fsid = b32decode(input_fsid).hex().upper()
+
+    return output_fsid
