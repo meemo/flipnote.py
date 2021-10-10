@@ -1,23 +1,8 @@
-# ====================
-# kwz.py version 1.0.0
-# ====================
-#
-# Class for reading frame data and audio from Flipnote Studio 3D's .kwz, .ico, and .kwc formats
-# Implementation by James Daniel (github.com/jaames | rakujira.jp)
-#
-# Credits:
-#   Kinnay - reverse-engineering tile compression
-#   Khangaroo - reverse-engineering a large chunk of the audio format
-#   Shutterbug - early decompression and frame diffing work
-#   MrNbaYoh - identifying the use of a line table
-#   Stary, JoshuaDoes and thejsa - debugging/optimisation help
-#   Sudofox - audio format help and comment sample files
-#
-# Format docs:
-#   https://github.com/Flipnote-Collective/flipnote-studio-3d-docs/wiki/kwz-format
-
 import struct
 import numpy as np
+from hashlib import md5
+
+from src.flipnote.schema import convertKWZFSIDToPPM
 
 FRAMERATES = [0.2, 0.5, 1, 2, 4, 6, 8, 12, 20, 24, 30]
 
@@ -41,34 +26,6 @@ TABLE_2 = np.array([0x0000, 0x0CD0, 0x19A0, 0x0003, 0x02D9, 0x088B, 0x0051, 0x00
                     0x0012, 0x0036, 0x0002, 0x02DC, 0x0B64, 0x08DC, 0x0144, 0x00FC,
                     0x0024, 0x001C, 0x099C, 0x0334, 0x1338, 0x0668, 0x166C, 0x1004], dtype=np.uint16)
 
-# table3 - line offsets, but the lines are shifted to the left by one pixel
-TABLE_3 = np.zeros(6561, dtype=np.uint16)
-index = 0
-for a in range(0, 2187, 729):
-    for b in range(0, 729, 243):
-        for c in range(0, 243, 81):
-            for d in range(0, 81, 27):
-                for e in range(0, 27, 9):
-                    for f in range(0, 9, 3):
-                        for g in range(0, 3, 1):
-                            for h in range(0, 6561, 2187):
-                                TABLE_3[index] = a + b + c + d + e + f + g + h
-                                index += 1
-
-# linetable - contains every possible sequence of pixels for each tile line
-LINE_TABLE = np.zeros(6561, dtype="V8")
-index = 0
-for a in range(3):
-    for b in range(3):
-        for c in range(3):
-            for d in range(3):
-                for e in range(3):
-                    for f in range(3):
-                        for g in range(3):
-                            for h in range(3):
-                                LINE_TABLE[index] = bytes([b, a, d, c, f, e, h, g])
-                                index += 1
-
 ADPCM_STEP_TABLE = np.array([7, 8, 9, 10, 11, 12, 13, 14, 16, 17,
                              19, 21, 23, 25, 28, 31, 34, 37, 41, 45,
                              50, 55, 60, 66, 73, 80, 88, 97, 107, 118,
@@ -77,7 +34,7 @@ ADPCM_STEP_TABLE = np.array([7, 8, 9, 10, 11, 12, 13, 14, 16, 17,
                              876, 963, 1060, 1166, 1282, 1411, 1552, 1707, 1878, 2066,
                              2272, 2499, 2749, 3024, 3327, 3660, 4026, 4428, 4871, 5358,
                              5894, 6484, 7132, 7845, 8630, 9493, 10442, 11487, 12635, 13899,
-                             15289, 16818, 18500, 20350, 22385, 24623, 27086, 29794, 32767, 0], dtype=np.int16)
+                             15289, 16818, 18500, 20350, 22385, 24623, 27086, 29794, 32767], dtype=np.int16)
 
 # index table for 2-bit samples
 ADPCM_INDEX_TABLE_2 = np.array([-1, 2, -1, 2], dtype=np.int8)
@@ -86,58 +43,64 @@ ADPCM_INDEX_TABLE_2 = np.array([-1, 2, -1, 2], dtype=np.int8)
 ADPCM_INDEX_TABLE_4 = np.array([-1, -1, -1, -1, 2, 4, 6, 8,
                                 -1, -1, -1, -1, 2, 4, 6, 8], dtype=np.int8)
 
-# lookup table that maps 2-bit adpcm sample values to pcm samples
-ADPCM_SAMPLE_TABLE_2 = np.zeros(90 * 4, dtype=np.int16)
-for sample in range(4):
-    for step_index in range(90):
-        step = ADPCM_STEP_TABLE[step_index]
-        diff = step >> 3
-        if sample & 1:
-            diff += step
-        if sample & 2:
-            diff = -diff
-        ADPCM_SAMPLE_TABLE_2[sample + 4 * step_index] = diff
-
-# lookup table that maps 4-bit adpcm sample values to pcm samples
-ADPCM_SAMPLE_TABLE_4 = np.zeros(90 * 16, dtype=np.int16)
-for sample in range(16):
-    for step_index in range(90):
-        step = ADPCM_STEP_TABLE[step_index]
-        diff = step >> 3
-        if sample & 4:
-            diff += step
-        if sample & 2:
-            diff += step >> 1
-        if sample & 1:
-            diff += step >> 2
-        if sample & 8:
-            diff = -diff
-        ADPCM_SAMPLE_TABLE_4[sample + 16 * step_index] = diff
-
 
 class Parser:
-    def __init__(self, buffer=None):
+    def __init__(self, buffer=None, processing_frames=True):
         # layer output buffers
+        self.buffer = None
+        self.size = 0
+
+        self.sections = {}
+
+        self.is_folder_icon = False
+
+        self.frame_offsets = []
+        self.frame_meta = []
+        self.frame_count = 0
+
+        self.track_frame_speed = 0
+
         self.layer_pixels = np.zeros((3, 240, 40), dtype="V8")
+
+        self.thumb_index = 0
+        self.frame_speed = 0
+        self.layer_visibility = [False, False, False]
+
+        self.track_lengths = None
+
+        self.track_meta = None
+
+        self.framerate = None
+
+        self.meta = None
+
+        self.prev_decoded_frame = 0
+
+        self.LINE_TABLE = np.zeros(6561, dtype="V8")
+        self.TABLE_3 = np.zeros(6561, dtype=np.uint16)
+
         # initial values for read_bits()
         self.bit_index = 16
         self.bit_value = 0
+
         if buffer:
-            self.load(buffer)
+            self.load(buffer, processing_frames)
 
     @classmethod
     def open(cls, path):
         with open(path, "rb") as buffer:
             return cls(buffer)
 
-    def load(self, buffer):
+    def load(self, buffer, processing_frames):
         self.buffer = buffer
-        # lazy way to get file length - seek to the end (ignore signature), get the position, then seek back to the start
+
+        # lazy way to get file length:
+        # seek to the end (ignore signature), get the position, then seek back to the start
         self.buffer.seek(0, 2)
         self.size = self.buffer.tell() - 256
         self.buffer.seek(0, 0)
+
         # build list of section offsets + lengths
-        self.sections = {}
         offset = 0
         while offset < self.size:
             self.buffer.seek(offset)
@@ -148,7 +111,6 @@ class Parser:
         # read file header -- not present in folder icons
         if "KFH" in self.sections:
             self.decode_meta()
-            self.is_folder_icon = False
         else:
             self.is_folder_icon = True
             self.frame_count = 1
@@ -158,21 +120,23 @@ class Parser:
             self.buffer.seek(self.sections["KSN"]["offset"] + 8)
             self.track_frame_speed = struct.unpack("<I", self.buffer.read(4))
             self.track_lengths = struct.unpack("<IIIII", self.buffer.read(20))
+            self.meta.update(self.get_track_meta())
 
-        # build frame meta list + frame offset list
-        self.frame_meta = []
-        self.frame_offsets = []
-        self.buffer.seek(self.sections["KMI"]["offset"] + 8)
-        offset = self.sections["KMC"]["offset"] + 12
-        # parse each frame meta entry
-        # https://github.com/Flipnote-Collective/flipnote-studio-3d-docs/wiki/kwz-format#kmi-frame-meta
-        for i in range(self.frame_count):
-            meta = struct.unpack("<IHHH10xBBBBI", self.buffer.read(28))
-            self.frame_meta.append(meta)
-            self.frame_offsets.append(offset)
-            offset += meta[1] + meta[2] + meta[3]
+        if processing_frames:
+            self.buffer.seek(self.sections["KMI"]["offset"] + 8)
+            offset = self.sections["KMC"]["offset"] + 12
 
-        self.prev_decoded_frame = -1
+            # parse each frame meta entry
+            # https://github.com/Flipnote-Collective/flipnote-studio-3d-docs/wiki/kwz-format#kmi-frame-meta
+            for i in range(self.frame_count):
+                meta = struct.unpack("<IHHH10xBBBBI", self.buffer.read(28))
+
+                self.frame_meta.append(meta)
+                self.frame_offsets.append(offset)
+
+                offset += meta[1] + meta[2] + meta[3]
+
+                self.prev_decoded_frame = -1
 
     def unload(self):
         self.buffer.close()
@@ -197,18 +161,138 @@ class Parser:
 
         mask = (1 << num) - 1
         result = self.bit_value & mask
+
         self.bit_value >>= num
         self.bit_index += num
+
         return result
+
+    def gen_line_tables(self):
+        # table3 - line offsets, but the lines are shifted to the left by one pixel
+        index = 0
+        for a in range(0, 2187, 729):
+            for b in range(0, 729, 243):
+                for c in range(0, 243, 81):
+                    for d in range(0, 81, 27):
+                        for e in range(0, 27, 9):
+                            for f in range(0, 9, 3):
+                                for g in range(0, 3, 1):
+                                    for h in range(0, 6561, 2187):
+                                        self.TABLE_3[index] = a + b + c + d + e + f + g + h
+                                        index += 1
+
+        # linetable - contains every possible sequence of pixels for each tile line
+        index = 0
+        for a in range(3):
+            for b in range(3):
+                for c in range(3):
+                    for d in range(3):
+                        for e in range(3):
+                            for f in range(3):
+                                for g in range(3):
+                                    for h in range(3):
+                                        self.LINE_TABLE[index] = bytes([b, a, d, c, f, e, h, g])
+                                        index += 1
 
     @staticmethod
     def decode_filename(raw_filename):
         try:
             return raw_filename.decode("ascii")
         except UnicodeDecodeError:
-            # in some DSi Gallery notes, Nintendo actually messed up and included the PPM-format filename without converting it
+            # in some DSi Gallery notes, Nintendo messed up and included the
+            # PPM-format filename without converting it
             mac, ident, edits = struct.unpack("<3s13sH", raw_filename[0:18])
             return "{0}_{1}_{2:03d}".format("".join(["%02X" % c for c in mac]), ident.decode("ascii"), edits)
+
+    def get_thumbnail(self):
+        self.buffer.seek(self.sections["KTN"]["offset"] + 12)
+        return self.buffer.read(self.sections["KTN"]["length"])
+
+    def has_audio_track(self, track_index):
+        return self.track_lengths[track_index] > 0
+
+    def get_audio_track_offset(self, track_index):
+        # offset starts after sound header
+        offset = self.sections["KSN"]["offset"] + 36
+        for i in range(track_index):
+            offset += self.track_lengths[i]
+        return offset
+
+    def get_audio_track(self, track_index):
+        size = self.track_lengths[track_index]
+
+        self.buffer.seek(self.get_audio_track_offset(track_index))
+
+        return self.buffer.read(size)
+
+    def get_track_digest(self, track_index):
+        if self.has_audio_track(track_index):
+            return md5(self.get_audio_track(track_index)).hexdigest()
+        else:
+            return None
+
+    def decode_audio_track(self, track_index, step_index=0):
+        size = self.track_lengths[track_index]
+
+        self.buffer.seek(self.get_audio_track_offset(track_index))
+
+        # create an output buffer with enough space for 60 seconds of audio at 16364 Hz
+        output = np.zeros(16364 * 60, dtype="<u2")
+        output_offset = 0
+
+        predictor = 0
+        diff = 0
+
+        for byte in self.buffer.read(size):
+            bit_pos = 0
+            while bit_pos < 8:
+                if step_index < 18 or bit_pos > 4:
+                    sample = byte & 0x3
+
+                    step = ADPCM_STEP_TABLE[step_index]
+                    diff = step >> 3
+
+                    if sample & 1:
+                        diff += step
+                    if sample & 2:
+                        diff = -diff
+
+                    predictor += diff
+                    step_index += ADPCM_INDEX_TABLE_2[sample]
+
+                    byte >>= 2
+                    bit_pos += 2
+                else:
+                    sample = byte & 0xF
+
+                    step = ADPCM_STEP_TABLE[step_index]
+                    diff = step >> 3
+
+                    if sample & 1:
+                        diff += step >> 2
+                    if sample & 2:
+                        diff += step >> 1
+                    if sample & 4:
+                        diff += step
+                    if sample & 8:
+                        diff = -diff
+
+                    predictor += diff
+                    step_index += ADPCM_INDEX_TABLE_4[sample]
+
+                    byte >>= 4
+                    bit_pos += 4
+
+                # clamp step index and diff
+                step_index = max(0, min(step_index, 79))
+                diff = max(-2048, min(diff, 2047))
+
+                # add result to output buffer
+                output[output_offset] = predictor * 16
+                output_offset += 1
+
+        # trim output array to the size of the track before returning
+        return output[:output_offset]
 
     def decode_meta(self):
         self.buffer.seek(self.sections["KFH"]["offset"] + 12)
@@ -226,250 +310,40 @@ class Parser:
         self.meta = {
             "lock": flags & 0x1,
             "loop": (flags >> 1) & 0x01,
+            "flags": flags,
+            "layer_flags": layer_flags,
+            "app_version": app_version,
             "frame_count": self.frame_count,
             "frame_speed": self.frame_speed,
             "thumb_index": self.thumb_index,
-            "timestamp": modified_timestamp,
-            "creation_timestamp": creation_timestamp,
-            "root": {
-                "username": root_author_name.decode("utf-16").rstrip("\x00"),
-                "fsid": root_author_id.hex(),
-                "filename": self.decode_filename(root_filename),
-            },
-            "parent": {
-                "username": parent_author_name.decode("utf-16").rstrip("\x00"),
-                "fsid": parent_author_id.hex(),
-                "filename": self.decode_filename(parent_filename),
-            },
-            "current": {
-                "username": current_author_name.decode("utf-16").rstrip("\x00"),
-                "fsid": current_author_id.hex(),
-                "filename": self.decode_filename(current_filename)
-            }
+            "modified_timestamp": modified_timestamp + 946684800,
+            "creation_timestamp": creation_timestamp + 946684800,
+            "root_username": root_author_name.decode("utf-16").rstrip("\x00"),
+            "root_fsid": root_author_id.hex(),
+            "root_fsid_ppm": convertKWZFSIDToPPM(root_author_id.hex()),
+            "root_filename": self.decode_filename(root_filename),
+            "parent_username": parent_author_name.decode("utf-16").rstrip("\x00"),
+            "parent_fsid": parent_author_id.hex(),
+            "parent_fsid_ppm": convertKWZFSIDToPPM(root_author_id.hex()),
+            "parent_filename": self.decode_filename(parent_filename),
+            "current_username": current_author_name.decode("utf-16").rstrip("\x00"),
+            "current_fsid": current_author_id.hex(),
+            "current_fsid_ppm": convertKWZFSIDToPPM(current_author_id.hex()),
+            "current_filename": self.decode_filename(current_filename)
         }
+
         return self.meta
 
-    def get_diffing_flag(self, frame_index):
-        # bits are inverted so that if a bit is set, it indicates a layer needs to be decoded
-        return ~(self.frame_meta[frame_index][0] >> 4) & 0x07
-
-    def decode_frame(self, frame_index, diffing_flag=0x07, is_prev_frame=False):
-        # if this frame is being decoded as a prev frame, then we only want to decode the layers necessary
-        if is_prev_frame:
-            diffing_flag &= self.get_diffing_flag(frame_index + 1)
-        # the self.prev_decoded_frame check is an optimisation for decoding frames in full sequence
-        if not self.prev_decoded_frame == frame_index - 1 and diffing_flag:
-            self.decode_frame(frame_index - 1, diffing_flag=diffing_flag, is_prev_frame=True)
-
-        meta = self.frame_meta[frame_index]
-        offset = self.frame_offsets[frame_index]
-
-        # loop through layers
-        for layer_index in range(3):
-            layer_length = meta[layer_index + 1]
-            self.buffer.seek(offset)
-            offset += layer_length
-
-            # if the layer is 38 bytes then it hasn't changed at all since the previous frame, so we can skip it
-            if layer_length == 38:
-                continue
-
-            if not (diffing_flag >> layer_index) & 0x1:
-                continue
-
-            # skip if the layer is invisible
-            if not self.layer_visibility[layer_index]:
-                continue
-
-            pixel_buffer = self.layer_pixels[layer_index]
-            self.bit_index = 16
-            self.bit_value = 0
-            layer_offset = 0
-            skip = 0
-            # tile work buffer
-            tile_buffer = np.zeros(8, dtype="V8")
-
-            # loop through 128 * 128 large tiles
-            for tile_offset_y in range(0, 240, 128):
-                for tile_offset_x in range(0, 320, 128):
-                    # each large tile is made of 8 * 8 small tiles
-                    for sub_tile_offset_y in range(0, 128, 8):
-                        y = tile_offset_y + sub_tile_offset_y
-                        # if the tile falls off the bottom of the frame, jump to the next large tile
-                        if y >= 240:
-                            break
-
-                        for sub_tile_offset_x in range(0, 128, 8):
-                            x = tile_offset_x + sub_tile_offset_x
-                            # if the tile falls off the right of the frame, jump to the next small tile row
-                            if x >= 320:
-                                break
-
-                            if skip:
-                                skip -= 1
-                                continue
-
-                            type = self.read_bits(3)
-
-                            if type == 0:
-                                line_index = TABLE_1[self.read_bits(5)]
-                                tile_buffer[0:8] = [LINE_TABLE[line_index]] * 8
-
-                            elif type == 1:
-                                line_index = self.read_bits(13)
-                                tile_buffer[0:8] = [LINE_TABLE[line_index]] * 8
-
-                            elif type == 2:
-                                line_value = self.read_bits(5)
-                                a = LINE_TABLE[TABLE_1[line_value]]
-                                b = LINE_TABLE[TABLE_2[line_value]]
-                                tile_buffer[0:8] = [a, b, a, b, a, b, a, b]
-
-                            elif type == 3:
-                                line_value = self.read_bits(13)
-                                a = LINE_TABLE[line_value]
-                                b = LINE_TABLE[TABLE_3[line_value]]
-                                tile_buffer[0:8] = [a, b, a, b, a, b, a, b]
-
-                            elif type == 4:
-                                mask = self.read_bits(8)
-                                for i in range(8):
-                                    if mask & (1 << i):
-                                        line_index = TABLE_1[self.read_bits(5)]
-                                    else:
-                                        line_index = self.read_bits(13)
-                                    tile_buffer[i] = LINE_TABLE[line_index]
-
-                            elif type == 5:
-                                skip = self.read_bits(5)
-                                continue
-
-                            elif type == 6:
-                                print("Found tile type 6 -- this is not implemented")
-
-                            elif type == 7:
-                                pattern = self.read_bits(2)
-                                use_table = self.read_bits(1)
-
-                                if use_table:
-                                    a_index = TABLE_1[self.read_bits(5)]
-                                    b_index = TABLE_1[self.read_bits(5)]
-                                    pattern = (pattern + 1) % 4
-                                else:
-                                    a_index = self.read_bits(13)
-                                    b_index = self.read_bits(13)
-
-                                a = LINE_TABLE[a_index]
-                                b = LINE_TABLE[b_index]
-
-                                if pattern == 0: tile_buffer[0:8] = [a, b, a, b, a, b, a, b]
-                                if pattern == 1: tile_buffer[0:8] = [a, a, b, a, a, b, a, a]
-                                if pattern == 2: tile_buffer[0:8] = [a, b, a, a, b, a, a, b]
-                                if pattern == 3: tile_buffer[0:8] = [a, b, b, a, b, b, a, b]
-
-                            # copy each line of the tile into the layer's pixel buffer
-                            for line in range(0, 8):
-                                pixel_buffer[y + line][x // 8] = tile_buffer[line]
-
-        self.prev_decoded_frame = frame_index
-        return self.layer_pixels.view(np.uint8)
-
-    def get_frame_palette(self, frame_index):
-        flags = self.frame_meta[frame_index][0]
-        return [flags & 0xF,  # paper color
-                (flags >> 8) & 0xF,  # layer A color 1
-                (flags >> 12) & 0xF,  # layer A color 2
-                (flags >> 16) & 0xF,  # layer B color 1
-                (flags >> 20) & 0xF,  # layer B color 2
-                (flags >> 24) & 0xF,  # layer C color 1
-                (flags >> 28) & 0xF]  # layer C color 2
-
-    def get_frame_image(self, frame_index):
-        layers = self.decode_frame(frame_index)
-        if self.is_folder_icon:
-            width = 24
-            height = 24
-        else:
-            width = 320
-            height = 240
-        image = np.zeros((height, frame_index), dtype=np.uint8)
-
-        layer_depths = self.frame_meta[frame_index][4:7]
-        # get a list of layer indexes (from 0 (layer A) to 2 (layer C)), sorted by layer depth
-        # the layer depth closest to 6 should be first, closest to 0 last
-        layer_order = np.argsort(layer_depths)[::-1]
-
-        for y in range(height):
-            for x in range(width):
-                for layer_index in layer_order:
-                    pixel = layers[layer_index][y][x]
-                    if pixel:
-                        image[y][x] = pixel + layer_index * 2
-        return image
-
-    def has_audio_track(self, track_index):
-        return self.track_lengths[track_index] > 0
-
-    def get_audio_track(self, track_index):
-        size = self.track_lengths[track_index]
-        # offset starts after sound header
-        offset = self.sections["KSN"]["offset"] + 36
-        for i in range(track_index):
-            offset += self.track_lengths[i]
-        self.buffer.seek(offset)
-
-        # create an output buffer with enough space for 60 seconds of audio at 16364 Hz
-        output = np.zeros(16364 * 60, dtype="<u2")
-        outputOffset = 0
-
-        # initial decoder state
-        prev_diff = 0
-        # this is actually a bug in nintendo's own implementation, use 0 instead for nicer-souding (but not console-accurate) audio
-        prev_step_index = 40
-
-        for byte in self.buffer.read(size):
-
-            bit_pos = 0
-            while bit_pos < 8:
-
-                # read a 2-bit sample if the previous step index is < 18, or if only 2 bits are left of the byte
-                if prev_step_index < 18 or bit_pos > 4:
-                    # isolate 2-bit sample
-                    sample = (byte >> bit_pos) & 0x3
-                    # get diff
-                    diff = prev_diff + ADPCM_SAMPLE_TABLE_2[sample + 4 * prev_step_index]
-                    # get step index
-                    step_index = prev_step_index + ADPCM_INDEX_TABLE_2[sample]
-                    bit_pos += 2
-
-                # else read a 4-bit sample
-                else:
-                    # isolate 4-bit sample
-                    sample = (byte >> bit_pos) & 0xF
-                    # get diff
-                    diff = prev_diff + ADPCM_SAMPLE_TABLE_4[sample + 16 * prev_step_index]
-                    # get step index
-                    step_index = prev_step_index + ADPCM_INDEX_TABLE_4[sample]
-                    bit_pos += 4
-
-                # clamp step index and diff
-                step_index = max(0, min(step_index, 79))
-                diff = max(-2048, min(diff, 2047))
-
-                # add result to output buffer
-                output[outputOffset] = diff * 16
-                outputOffset += 1
-
-                # set prev decoder state
-                prev_step_index = step_index
-                prev_diff = diff
-
-        return output[:outputOffset]
-
-
-if __name__ == "__main__":
-    from sys import argv
-
-    KWZParser.open(argv[1])
-
-# TODO: audio track mixing
+    def get_track_meta(self):
+        return {
+            "bgm_used": self.has_audio_track(0),
+            "se1_used": self.has_audio_track(1),
+            "se2_used": self.has_audio_track(2),
+            "se3_used": self.has_audio_track(3),
+            "se4_used": self.has_audio_track(4),
+            "bgm_digest": self.get_track_digest(0),
+            "se1_digest": self.get_track_digest(1),
+            "se2_digest": self.get_track_digest(2),
+            "se3_digest": self.get_track_digest(3),
+            "se4_digest": self.get_track_digest(4)
+        }

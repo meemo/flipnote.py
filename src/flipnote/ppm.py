@@ -1,36 +1,10 @@
-# ====================
-# ppm.py version 1.0.0
-# ====================
-
-# Class for parsing Flipnote Studio's .ppm animation format
-# Implementation by James Daniel (aka jaames) (github.com/jaames | rakujira.jp)
-#
-# Credits:
-#   PPM format reverse-engineering and documentation:
-#     bricklife (http://ugomemo.g.hatena.ne.jp/bricklife/20090307/1236391313)
-#     mirai-iro (http://mirai-iro.hatenablog.jp/entry/20090116/ugomemo_ppm)
-#     harimau_tigris (http://ugomemo.g.hatena.ne.jp/harimau_tigris)
-#     steven (http://www.dsibrew.org/wiki/User:Steven)
-#     yellows8 (http://www.dsibrew.org/wiki/User:Yellows8)
-#     PBSDS (https://github.com/pbsds)
-#     jaames (https://github.com/jaames)
-#   Identifying the PPM sound codec:
-#     Midmad from Hatena Haiku
-#     WDLMaster from hcs64.com
-
 import struct
 import numpy as np
 from datetime import datetime
 
 # Flipnote speed -> frames per second
-FRAMERATES = {1: 0.5,
-              2: 1,
-              3: 2,
-              4: 4,
-              5: 6,
-              6: 12,
-              7: 20,
-              8: 30}
+# Framrates are indexed from 1, so the first value is a placeholder
+FRAMERATES = [0, 0.5, 1, 2, 4, 6, 12, 20, 30]
 
 # Thumbnail bitmap RGB colors
 THUMBNAIL_PALETTE = [(0xFF, 0xFF, 0xFF),
@@ -64,6 +38,9 @@ class Parser:
         return cls(f)
 
     def __init__(self, stream=None):
+        self.lock = None
+        self.thumb_index = None
+
         if stream:
             self.load(stream)
 
@@ -115,9 +92,8 @@ class Parser:
         self.root_author_id = "%016X" % struct.unpack("<Q", self.stream.read(8))
         self.partial_filename = self.stream.read(8)  # not really useful for anything :/
         # timestamp is stored as the number of seconds since jan 1st 2000
-        timestamp = struct.unpack("<I", self.stream.read(4))[0]
-        # we add 946684800 to convert this to a more common unix timestamp, which start on jan 1st 1970
-        self.timestamp = datetime.fromtimestamp(timestamp + 946684800)
+        # we add 946684800 to convert this to a unix timestamp
+        self.timestamp = datetime.fromtimestamp(struct.unpack("<I", self.stream.read(4))[0] + 946684800)
 
     def read_thumbnail(self):
         self.stream.seek(0xA0)
