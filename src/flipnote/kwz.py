@@ -2,7 +2,7 @@ import struct
 import numpy as np
 from hashlib import md5
 
-from src.flipnote.schema import convertKWZFSIDToPPM
+from flipnote.schema import convertKWZFSIDToPPM
 
 FRAMERATES = [0.2, 0.5, 1, 2, 4, 6, 8, 12, 20, 24, 30]
 
@@ -197,7 +197,7 @@ class Parser:
     @staticmethod
     def decode_filename(raw_filename):
         try:
-            return raw_filename.decode("ascii")
+            return raw_filename.decode("ascii").rstrip("\x00")
         except UnicodeDecodeError:
             # in some DSi Gallery notes, Nintendo messed up and included the
             # PPM-format filename without converting it

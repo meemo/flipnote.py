@@ -54,6 +54,9 @@ def convertKWZFSIDToPPM(input_fsid):
     """
     output_fsid = ""
 
+    # Clean up input
+    input_fsid = str(input_fsid).strip().upper()
+
     if verifyKWZFSID(input_fsid):
         # Trim the first byte of the FSID
         # FSIDs from KWZ files have an extra null(?) byte at the end, trim it if it exists
@@ -84,7 +87,9 @@ def convertPPMtoKWZ(input_fsid):
     Any invalid input will be returned without modification.
     - e.g. if a PPM format FSID is used as the input or the length is invalid
     """
-    output_fsid = input_fsid
+
+    # Clean up input
+    output_fsid = str(input_fsid).strip().upper()
 
     if verifyPPMFSID(input_fsid):
         # Invert the FSID then split into byte sized chunks
@@ -105,7 +110,8 @@ def unpackKWZFSID(input_fsid):
     Any invalid input will be returned without modification.
     - e.g. if a PPM format FSID is used as the input or the length is invalid
     """
-    output_fsid = input_fsid
+    # Clean up input
+    output_fsid = str(input_fsid).strip().upper()
 
     if verifyKWZFSID(input_fsid):
         # Convert custom base-32 encoded string to the standard base-32 alphabet
