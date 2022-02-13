@@ -104,22 +104,24 @@ def convertPPMtoKWZ(input_fsid):
     return output_fsid
 
 
-def unpackKWZFSID(input_fsid):
+def unpackKWZFilename(input_filename):
     """
-    Unpacks KWZ format FSID to its decoded hex bytes.
-    Any invalid input will be returned without modification.
-    - e.g. if a PPM format FSID is used as the input or the length is invalid
+    Decodes a KWZ format filename to a string of its decoded hex bytes.
+    Any invalid input that doesn't match the filename regex will be returned without modification.
     """
     # Clean up input
-    output_fsid = str(input_fsid).strip().upper()
+    output_filename = str(input_filename).strip().upper()
 
-    if verifyKWZFSID(input_fsid):
+    if verifyKWZFSID(output_filename):
         # Convert custom base-32 encoded string to the standard base-32 alphabet
-        str(input_fsid).translate(KWZ_FSID_trans)
+        str(output_filename).translate(KWZ_FSID_trans)
 
         # Add padding to allow for decoding
-        input_fsid += "===="
+        input_filename += "===="
 
-        output_fsid = b32decode(input_fsid).hex().upper()
+        output_filename = b32decode(input_filename).hex().upper()
+    else:
+        # Return without modification if verification fails
+        output_filename = input_filename
 
-    return output_fsid
+    return output_filename
