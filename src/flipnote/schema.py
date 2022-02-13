@@ -112,7 +112,7 @@ def unpackKWZFilename(input_filename):
     # Clean up input
     output_filename = str(input_filename).strip().upper()
 
-    if verifyKWZFSID(output_filename):
+    if verifyKWZFilename(output_filename):
         # Convert custom base-32 encoded string to the standard base-32 alphabet
         str(output_filename).translate(KWZ_FSID_trans)
 
@@ -125,3 +125,4 @@ def unpackKWZFilename(input_filename):
         output_filename = input_filename
 
     return output_filename
+

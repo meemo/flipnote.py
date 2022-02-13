@@ -4,7 +4,7 @@ with open("README.md", "r", encoding="utf-8") as readme:
     long_description = readme.read()
 
 setup(name="flipnote",
-      version="0.1.2",
+      version="0.1.333
       description="A Python library for Flipnote Studio (3D) files",
       long_description=long_description,
       long_description_content_type="text/markdown",
