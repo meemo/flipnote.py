@@ -1,5 +1,8 @@
 # Changelog
 
+## 0.2.1: KWZ video bug fix
+- Pull libugomemo 0.0.2 to fix bug
+
 ## 0.2.0: Rewrite, feature expansion, libugomemo acceleration
 - Complete rewrite
 - C acceleration via libugomemo (ctypes)

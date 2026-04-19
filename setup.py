@@ -45,7 +45,7 @@ class BuildWithNative(build_py):
 
 setup(
     name="flipnote",
-    version="0.2.0",
+    version="0.2.1",
     description="A Python library for Flipnote Studio (3D) files",
     long_description=long_description,
     long_description_content_type="text/markdown",

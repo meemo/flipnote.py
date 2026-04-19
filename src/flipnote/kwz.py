@@ -298,12 +298,14 @@ def _decompress_layer(layer, prev_layer, data, size, is_diff):
                 layer[y + row, x:x + 8] = line
 
         elif tile_type == 2:
-            # Common index -> alternating line_a (even) / line_b from shifted table (odd)
+            # Common index -> alternating line_a (even) / line_b (odd)
+            # KWZ_LINE_INDEX_SHIFTED contains LINE_TABLE indices for the shifted lines,
+            # not indices into LINE_TABLE_SHIFTED.
             idx = reader.read(5)
             line_idx_a = KWZ_COMMON_LINE_INDEX[idx]
             line_idx_b = KWZ_LINE_INDEX_SHIFTED[idx]
             line_a = LINE_TABLE[line_idx_a]
-            line_b = LINE_TABLE_SHIFTED[line_idx_b]
+            line_b = LINE_TABLE[line_idx_b]
             for row in range(8):
                 if row & 1:
                     layer[y + row, x:x + 8] = line_b
