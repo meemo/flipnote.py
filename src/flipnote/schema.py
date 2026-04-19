@@ -114,12 +114,10 @@ def unpackKWZFilename(input_filename):
 
     if verifyKWZFilename(output_filename):
         # Convert custom base-32 encoded string to the standard base-32 alphabet
-        str(output_filename).translate(KWZ_FSID_trans)
+        translated = output_filename.translate(KWZ_FSID_trans)
 
         # Add padding to allow for decoding
-        input_filename += "===="
-
-        output_filename = b32decode(input_filename).hex().upper()
+        output_filename = b32decode(translated + "====").hex().upper()
     else:
         # Return without modification if verification fails
         output_filename = input_filename

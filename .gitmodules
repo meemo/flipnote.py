@@ -1,0 +1,3 @@
+[submodule "lib/libugomemo"]
+	path = lib/libugomemo
+	url = git@github.com:meemo/libugomemo.git

@@ -1,5 +1,9 @@
 .idea/
 dist/
 dist_archive/
-flipnote.egg-info/
+*.egg-info/
 __pycache__/
+.venv/
+build/
+src/*.egg-info/
+src/flipnote/libugomemo.*

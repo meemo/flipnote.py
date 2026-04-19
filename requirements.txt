@@ -1,4 +1,1 @@
 numpy
-twine
-build
-setuptools

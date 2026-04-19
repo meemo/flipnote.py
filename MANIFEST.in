@@ -1,0 +1,3 @@
+recursive-include lib/libugomemo/src *.c
+recursive-include lib/libugomemo/include *.h
+include lib/libugomemo/Makefile
